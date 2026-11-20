@@ -1,0 +1,16 @@
+{
+  "name": "tab-volume-normalizer",
+  "version": "1.0.0",
+  "description": "Firefox extension: per-tab audio volume normalization, toggled from a toolbar button.",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "lint": "web-ext lint --source-dir . --self-hosted",
+    "start": "web-ext run --source-dir .",
+    "build": "web-ext build --source-dir . --artifacts-dir web-ext-artifacts --overwrite-dest --ignore-files package.json package-lock.json README.md LICENSE .gitignore \"scripts/**\" \".github/**\"",
+    "sign": "web-ext sign --source-dir . --artifacts-dir web-ext-artifacts --channel=unlisted --ignore-files package.json package-lock.json README.md LICENSE .gitignore \"scripts/**\" \".github/**\""
+  },
+  "devDependencies": {
+    "web-ext": "^8.3.0"
+  }
+}

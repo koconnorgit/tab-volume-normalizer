@@ -1,0 +1,86 @@
+name: release
+
+# Build (and sign, if AMO creds are configured) on a published GitHub Release,
+# and attach the artifact to that release. Also runnable manually.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install
+        run: npm ci
+
+      - name: Version matches tag
+        if: github.event_name == 'release'
+        run: |
+          ver="$(node -p "require('./manifest.json').version")"
+          tag="${{ github.event.release.tag_name }}"
+          if [ "$tag" != "v$ver" ] && [ "$tag" != "$ver" ]; then
+            echo "::error::Release tag '$tag' does not match manifest version '$ver' (expected v$ver)."
+            exit 1
+          fi
+
+      - name: Lint
+        run: npm run lint
+
+      # Signing is release-only. AMO rejects a version it has already accepted,
+      # so a manual run that signs burns that version and the later release run
+      # dies on "Version X already exists" with nothing attached. Manual runs
+      # stay unsigned so they can never poison a release.
+      - name: Build or sign
+        id: pack
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.WEB_EXT_API_KEY }}
+          WEB_EXT_API_SECRET: ${{ secrets.WEB_EXT_API_SECRET }}
+          IS_RELEASE: ${{ github.event_name == 'release' }}
+        run: |
+          if [ "$IS_RELEASE" != "true" ]; then
+            echo "Manual run — building an unsigned .zip (signing is release-only)…"
+            npm run build
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "$WEB_EXT_API_KEY" ] && [ -n "$WEB_EXT_API_SECRET" ]; then
+            echo "AMO credentials present — signing (unlisted)…"
+            npm run sign
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No AMO credentials — building an unsigned .zip…"
+            npm run build
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Signed releases get a predictably-named .xpi and an updates.json so
+      # installed copies auto-update (manifest update_url → this release's asset).
+      - name: Build update manifest
+        if: steps.pack.outputs.signed == 'true' && github.event_name == 'release'
+        run: |
+          ver="$(node -p "require('./manifest.json').version")"
+          xpi="$(ls web-ext-artifacts/*.xpi | head -1)"
+          dest="web-ext-artifacts/tab-volume-normalizer-$ver.xpi"
+          [ "$xpi" != "$dest" ] && mv "$xpi" "$dest"
+          node scripts/make-updates.mjs "$dest" "${{ github.repository }}" "${{ github.event.release.tag_name }}" web-ext-artifacts/updates.json
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tab-volume-normalizer
+          path: web-ext-artifacts/*
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" web-ext-artifacts/* --clobber
